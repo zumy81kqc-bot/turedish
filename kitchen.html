@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>初魚酸菜魚 - 廚房出餐系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #ffffff; color: #18181b; }
+        .order-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 2rem; }
+        .history-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; }
+    </style>
+</head>
+<body class="p-8">
+
+    <header class="flex justify-between items-center mb-10 border-b border-zinc-100 pb-8">
+        <div>
+            <h1 class="text-4xl font-black tracking-tighter text-zinc-900 flex items-center gap-3">
+                <span class="text-red-600 animate-pulse">●</span> 初魚酸菜魚出餐看板
+            </h1>
+            <p class="text-zinc-400 mt-2 text-lg">KITCHEN DISPLAY SYSTEM</p>
+        </div>
+        <div id="live-clock" class="text-3xl font-mono bg-zinc-50 text-zinc-800 px-8 py-3 rounded-3xl border border-zinc-200">00:00:00</div>
+    </header>
+
+    <div id="order-board" class="order-grid mb-20"></div>
+
+    <section class="mt-20 border-t-4 border-zinc-100 pt-10">
+        <div class="flex items-center gap-4 mb-6">
+            <h2 class="text-2xl font-black text-zinc-400 italic">RECENTLY COMPLETED 最近完成</h2>
+            <span class="text-xs bg-zinc-100 text-zinc-400 px-2 py-1 rounded">僅顯示最後 5 筆</span>
+        </div>
+        <div id="history-board" class="history-grid opacity-60 hover:opacity-100 transition-opacity">
+            </div>
+    </section>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyAQmRJyaxZ2U8EhUz_zxXAp9TgzrMQ54eg",
+            authDomain: "tureyuhotpot.firebaseapp.com",
+            projectId: "tureyuhotpot",
+            storageBucket: "tureyuhotpot.firebasestorage.app",
+            messagingSenderId: "883173642278",
+            appId: "1:883173642278:web:6c3d091b59f7b0d35c96e7",
+            databaseURL: "https://tureyuhotpot-default-rtdb.firebaseio.com"
+        };
+        if (!firebase.apps.length) { firebase.initializeApp(firebaseConfig); }
+        const db = firebase.database();
+
+        db.ref('orders').on('value', (snapshot) => {
+            const orders = snapshot.val();
+            const board = document.getElementById('order-board');
+            const historyBoard = document.getElementById('history-board');
+            
+            board.innerHTML = '';
+            historyBoard.innerHTML = '';
+
+            if (!orders) {
+                board.innerHTML = '<p class="col-span-full text-center text-zinc-300 text-2xl py-20 font-bold">目前無待出餐項目</p>';
+                return;
+            }
+
+            const activeOrders = [];
+            const completedOrders = [];
+
+            // 分類訂單
+            Object.keys(orders).forEach(id => {
+                const order = { ...orders[id], id: id };
+                if (order.status === "已完成") {
+                    completedOrders.push(order);
+                } else {
+                    activeOrders.push(order);
+                }
+            });
+
+            // 1. 渲染：待出餐訂單 (倒序，新的在後)
+            activeOrders.sort((a, b) => a.createdAt - b.createdAt).forEach(order => {
+                let borderColor = "border-red-500";
+                let btnColor = "bg-yellow-400 hover:bg-yellow-500 text-black";
+                let btnText = "👨‍🍳 開始製作";
+                let nextStatus = "製作中";
+
+                if (order.status === "製作中") {
+                    borderColor = "border-yellow-400";
+                    btnColor = "bg-green-600 hover:bg-green-700 text-white";
+                    btnText = "✅ 完成出餐";
+                    nextStatus = "已完成";
+                }
+
+                const typeTag = order.type === "外帶" ? "bg-blue-600 text-white" : "bg-zinc-800 text-white";
+                const itemsHtml = order.items.map(i => `
+                    <li class="flex justify-between border-b border-zinc-100 py-4 text-2xl font-bold">
+                        <span>${i.name}</span><span class="text-red-600 font-black">x 1</span>
+                    </li>
+                `).join('');
+
+                board.innerHTML += `
+                    <div class="bg-white rounded-[3rem] p-10 border-l-[20px] ${borderColor} shadow-[0_30px_60px_rgba(0,0,0,0.12)] border border-zinc-100">
+                        <div class="flex justify-between items-start mb-8">
+                            <div>
+                                <span class="${typeTag} px-5 py-1.5 rounded-full text-sm font-black tracking-widest uppercase mb-3 inline-block">${order.type || '內用'}</span>
+                                <h2 class="text-5xl font-black text-zinc-900 tracking-tighter">桌號：${order.table || '未填'}</h2>
+                            </div>
+                            <span class="text-zinc-400 font-mono text-lg">${new Date(order.createdAt).toLocaleTimeString()}</span>
+                        </div>
+                        <ul class="mb-10">${itemsHtml}</ul>
+                        <button onclick="updateStatus('${order.id}', '${nextStatus}')" class="w-full ${btnColor} py-6 rounded-[2rem] font-black text-3xl shadow-xl transition-all active:scale-95">
+                            ${btnText}
+                        </button>
+                    </div>
+                `;
+            });
+
+            // 2. 渲染：最近完成 (取最後 5 筆，提供叫回功能)
+            completedOrders.sort((a, b) => b.createdAt - a.createdAt).slice(0, 5).forEach(order => {
+                historyBoard.innerHTML += `
+                    <div class="bg-zinc-50 p-4 rounded-2xl border border-zinc-200 flex justify-between items-center shadow-sm">
+                        <div>
+                            <p class="font-black text-zinc-600 text-sm">[${order.type}] 桌：${order.table}</p>
+                            <p class="text-[10px] text-zinc-400 italic">${order.items.length} 項餐點</p>
+                        </div>
+                        <button onclick="updateStatus('${order.id}', '待製作')" class="bg-white border border-zinc-300 hover:bg-zinc-900 hover:text-white text-zinc-600 px-4 py-2 rounded-xl text-sm font-bold transition-all shadow-sm flex items-center gap-1">
+                            ↩️ 叫回
+                        </button>
+                    </div>
+                `;
+            });
+        });
+
+        function updateStatus(id, s) {
+            db.ref('orders/' + id).update({ status: s });
+        }
+
+        setInterval(() => {
+            document.getElementById('live-clock').innerText = new Date().toLocaleTimeString();
+        }, 1000);
+    </script>
+</body>
+</html>

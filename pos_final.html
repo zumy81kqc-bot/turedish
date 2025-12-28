@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>初魚酸菜魚 - 櫃檯全功能系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; }
+        .active-category { background-color: #dc2626; color: white; border-color: #dc2626; }
+        @keyframes pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .animate-pulse-soft { animation: pulse-soft 2s infinite; }
+        /* 滑鼠移入才顯示刪除按鈕 */
+        .order-card:hover .delete-btn { opacity: 1; }
+    </style>
+</head>
+<body class="bg-stone-100 h-screen flex flex-col overflow-hidden">
+
+    <header class="bg-zinc-900 text-white p-4 flex justify-between items-center shadow-xl">
+        <div class="flex items-center gap-3">
+            <span class="text-2xl">🔥</span>
+            <h1 class="text-xl font-black tracking-widest">初魚酸菜魚 - 櫃檯點餐</h1>
+        </div>
+        <div id="live-clock" class="text-sm font-mono text-zinc-400">正在初始化...</div>
+    </header>
+
+    <main class="flex-1 flex overflow-hidden">
+        <nav class="w-24 bg-white border-r border-gray-200 flex flex-col items-center py-6 gap-6">
+            <button onclick="filterMenu('all')" class="cat-btn active-category w-16 h-16 rounded-2xl border-2 flex flex-col items-center justify-center text-xs font-bold transition-all">全部</button>
+            <button onclick="filterMenu('主食')" class="cat-btn w-16 h-16 rounded-2xl border-2 border-gray-100 text-gray-500 text-xs font-bold transition-all">主食</button>
+            <button onclick="filterMenu('小菜')" class="cat-btn w-16 h-16 rounded-2xl border-2 border-gray-100 text-gray-500 text-xs font-bold transition-all">小菜</button>
+        </nav>
+
+        <section class="flex-1 p-6 overflow-y-auto">
+            <div id="menu-display" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6"></div>
+        </section>
+
+        <section class="w-96 bg-white shadow-2xl flex flex-col border-l">
+            <div class="p-4 bg-zinc-50 border-b space-y-3">
+                <div class="flex gap-2">
+                    <select id="order-type" class="flex-1 p-2 rounded-lg border border-zinc-300 font-bold text-sm bg-white">
+                        <option value="內用">🍽️ 內用</option>
+                        <option value="外帶">🛍️ 外帶</option>
+                    </select>
+                    <input type="text" id="table-number" placeholder="桌號/備註" class="flex-1 p-2 rounded-lg border border-zinc-300 font-bold text-sm">
+                </div>
+            </div>
+
+            <div id="cart-list" class="flex-1 p-4 overflow-y-auto space-y-2 max-h-[30%] border-b">
+                <div class="text-gray-300 text-center mt-10 text-sm">尚未點餐</div>
+            </div>
+            
+            <div class="p-6 bg-white">
+                <div class="flex justify-between items-end mb-4">
+                    <span class="font-bold text-zinc-500 text-sm">總額</span>
+                    <span class="text-3xl font-black text-red-600">$<span id="total-price">0</span></span>
+                </div>
+                <button onclick="submitOrder()" class="w-full bg-red-600 hover:bg-red-700 text-white py-4 rounded-2xl font-black text-xl shadow-lg transition-all active:scale-95">
+                    🚀 送出訂單
+                </button>
+            </div>
+
+            <div class="flex-1 p-4 border-t bg-zinc-50 overflow-hidden flex flex-col">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="font-black text-xs flex items-center gap-2 text-zinc-600">
+                        <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                        進度管理
+                    </h3>
+                    <button onclick="clearCompletedOrders()" class="text-[10px] bg-zinc-200 hover:bg-red-600 hover:text-white text-zinc-500 px-2 py-1 rounded transition-all">
+                        🧹 清除全部已完成
+                    </button>
+                </div>
+                <div id="order-tracker" class="flex-1 overflow-y-auto space-y-2 pr-1">
+                    </div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        // --- Firebase 配置 ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyAQmRJyaxZ2U8EhUz_zxXAp9TgzrMQ54eg",
+            authDomain: "tureyuhotpot.firebaseapp.com",
+            projectId: "tureyuhotpot",
+            storageBucket: "tureyuhotpot.firebasestorage.app",
+            messagingSenderId: "883173642278",
+            appId: "1:883173642278:web:6c3d091b59f7b0d35c96e7",
+            databaseURL: "https://tureyuhotpot-default-rtdb.firebaseio.com"
+        };
+
+        if (!firebase.apps.length) { firebase.initializeApp(firebaseConfig); }
+        const db = firebase.database();
+
+        // --- 菜單資料 ---
+        const products = [
+            { id: 1, name: '老罈酸菜魚', price: 180, category: '主食', emoji: '🐟' },
+            { id: 2, name: '泰式冬蔭功魚', price: 200, category: '主食', emoji: '🍋' },
+            { id: 3, name: '番茄魚', price: 180, category: '主食', emoji: '🍅' },
+            { id: 4, name: '酸湯肥牛', price: 180, category: '主食', emoji: '🥩' },
+            { id: 5, name: '番茄肥牛', price: 180, category: '主食', emoji: '🥘' },
+            { id: 6, name: '黃悶雞', price: 140, category: '主食', emoji: '🍗' },
+            { id: 7, name: '肉蛋腸粉', price: 65, category: '小菜', emoji: '🍱' },
+            { id: 8, name: '蛋腸粉(純素)', price: 55, category: '小菜', emoji: '🥗' }
+        ];
+
+        let cart = [];
+
+        // 渲染菜單
+        function renderMenu(category = 'all') {
+            const display = document.getElementById('menu-display');
+            const filtered = category === 'all' ? products : products.filter(p => p.category === category);
+            display.innerHTML = filtered.map(p => `
+                <div onclick="addToCart(${p.id})" class="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm hover:shadow-xl cursor-pointer transition-all active:scale-95">
+                    <div class="text-3xl mb-2">${p.emoji}</div>
+                    <h3 class="font-bold text-zinc-800">${p.name}</h3>
+                    <p class="text-red-600 font-black text-xl">$${p.price}</p>
+                </div>
+            `).join('');
+        }
+
+        // 加入購物車
+        function addToCart(id) {
+            const product = products.find(p => p.id === id);
+            cart.push({ ...product, cartId: Date.now() });
+            updateCartUI();
+        }
+
+        // 移除購物車項目
+        function removeFromCart(cartId) {
+            cart = cart.filter(item => item.cartId !== cartId);
+            updateCartUI();
+        }
+
+        // 更新購物車顯示
+        function updateCartUI() {
+            const list = document.getElementById('cart-list');
+            const total = document.getElementById('total-price');
+            if (cart.length === 0) {
+                list.innerHTML = '<div class="text-gray-300 text-center mt-10 text-sm">尚未點餐</div>';
+                total.innerText = '0';
+                return;
+            }
+            list.innerHTML = cart.map(item => `
+                <div class="flex justify-between items-center p-3 bg-zinc-50 rounded-xl border border-zinc-100">
+                    <span class="font-bold text-sm">${item.name}</span>
+                    <button onclick="removeFromCart(${item.cartId})" class="text-zinc-400">✕</button>
+                </div>
+            `).join('');
+            total.innerText = cart.reduce((acc, curr) => acc + curr.price, 0).toLocaleString();
+        }
+
+        // 送出訂單至廚房
+        function submitOrder() {
+            if (cart.length === 0) return alert('清單是空的唷！');
+            const type = document.getElementById('order-type').value;
+            const table = document.getElementById('table-number').value || "未填";
+            
+            const orderData = {
+                type: type,
+                table: table,
+                items: cart,
+                total: cart.reduce((acc, curr) => acc + curr.price, 0),
+                status: "待製作",
+                createdAt: firebase.database.ServerValue.TIMESTAMP
+            };
+
+            db.ref('orders').push(orderData).then(() => {
+                alert(`✅ [${type}] 訂單已傳送到廚房！`);
+                cart = [];
+                updateCartUI();
+                document.getElementById('table-number').value = '';
+            });
+        }
+
+        // 監聽雲端資料並顯示追蹤清單
+        db.ref('orders').on('value', (snapshot) => {
+            const orders = snapshot.val();
+            const tracker = document.getElementById('order-tracker');
+            if (!tracker) return;
+            tracker.innerHTML = '';
+
+            if (!orders) {
+                tracker.innerHTML = '<p class="text-zinc-300 text-center text-xs mt-10">尚無訂單進度</p>';
+                return;
+            }
+
+            Object.keys(orders).reverse().forEach(id => {
+                const order = orders[id];
+                let statusIcon = "⏳"; let statusClass = "text-red-500"; let bgClass = "bg-white border-zinc-100";
+                
+                if (order.status === "製作中") {
+                    statusIcon = "👨‍🍳"; statusClass = "text-yellow-600 animate-pulse-soft font-bold"; bgClass = "bg-yellow-50 border-yellow-100";
+                } else if (order.status === "已完成") {
+                    statusIcon = "✅"; statusClass = "text-green-600 font-bold"; bgClass = "bg-green-50 border-green-100 opacity-80";
+                }
+
+                tracker.innerHTML += `
+                    <div class="order-card flex items-center justify-between p-3 ${bgClass} rounded-xl border shadow-sm transition-all group">
+                        <div class="flex flex-col">
+                            <span class="font-black text-xs">[${order.type}] ${order.table}</span>
+                            <span class="text-[9px] text-zinc-400">${new Date(order.createdAt).toLocaleTimeString()}</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button onclick="deleteSingleOrder('${id}')" class="delete-btn opacity-0 text-[10px] bg-red-500 text-white px-2 py-1 rounded transition-all hover:bg-red-700">刪除</button>
+                            <span class="text-sm ${statusClass}">${statusIcon}</span>
+                        </div>
+                    </div>
+                `;
+            });
+        });
+
+        // 1. 手動：刪除單筆訂單
+        function deleteSingleOrder(id) {
+            if(confirm('確定要永久刪除這筆訂單紀錄嗎？')) {
+                db.ref('orders/' + id).remove();
+            }
+        }
+
+        // 2. 手動：一鍵清空所有已完成
+        function clearCompletedOrders() {
+            if (!confirm('確定要從雲端清除所有「已完成」的歷史紀錄嗎？')) return;
+            db.ref('orders').once('value', (snapshot) => {
+                const orders = snapshot.val();
+                if (!orders) return;
+                Object.keys(orders).forEach(id => {
+                    if (orders[id].status === "已完成") {
+                        db.ref('orders/' + id).remove();
+                    }
+                });
+            });
+        }
+
+        // 分類過濾
+        function filterMenu(category) {
+            document.querySelectorAll('.cat-btn').forEach(btn => btn.classList.remove('active-category'));
+            event.currentTarget.classList.add('active-category');
+            renderMenu(category);
+        }
+
+        window.onload = () => {
+            renderMenu('all');
+            setInterval(() => {
+                document.getElementById('live-clock').innerText = new Date().toLocaleTimeString();
+            }, 1000);
+        };
+    </script>
+</body>
+</html>
